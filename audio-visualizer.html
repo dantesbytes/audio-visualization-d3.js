@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        #visualizer { border: 1px solid #ccc; }
+        button { margin: 10px; padding: 5px 10px; }
+    </style>
+</head>
+<body>
+    <h1>Audio Visualizer</h1>
+    <button id="startButton">Start Visualizer</button>
+    <button id="stopButton" disabled>Stop Visualizer</button>
+    <br>
+    <svg id="visualizer" width="800" height="400"></svg>
+
+    <script>
+        class ColorService {
+            getColorInScale(index, scaleIndex) {
+                const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff'];
+                return colors[index % colors.length];
+            }
+        }
+
+        class LedService {
+            constructor(hostSvgElement, xScaler, yScaler, transitionTime, colorService) {
+                this.hostSvgElement = hostSvgElement;
+                this.xScaler = xScaler;
+                this.yScaler = yScaler;
+                this.transitionTime = transitionTime;
+                this.colorService = colorService;
+                this.graphElement = null;
+                this.colorFunction = (d, i) => this.colorService.getColorInScale(i, 4);
+            }
+
+            create(data) {
+                const w = (this.xScaler(1) - this.xScaler(0));
+                const rx = w * 0.1;
+
+                this.graphElement = this.hostSvgElement.selectAll('rect').data(data);
+
+                this.graphElement
+                    .enter()
+                    .append('rect')
+                    .style('fill', this.colorFunction)
+                    .attr('width', w)
+                    .attr('rx', rx)
+                    .attr('x', (d, i) => this.xScaler(i))
+                    .attr('y', d => this.yScaler(d))
+                    .attr('height', d => this.yScaler(0) - this.yScaler(d))
+                    .attr('opacity', 0.6);
+
+                this.hostSvgElement.append('g')
+                    .attr("class", "led-border")
+                    .attr("stroke-width", 0.2)
+                    .attr('stroke', 'white')
+                    .call(d3.axisLeft(this.yScaler).ticks(102).tickSize(-800).tickFormat(''));
+            }
+
+            update(data) {
+                if (!this.graphElement) {
+                    this.create(data);
+                    return;
+                }
+
+                const leds = this.hostSvgElement.selectAll('rect').data(data);
+                leds
+                    .transition()
+                    .duration(this.transitionTime)
+                    .ease(d3.easeLinear)
+                    .style('fill', this.colorFunction)
+                    .attr('y', d => this.yScaler(d))
+                    .attr('height', d => this.yScaler(0) - this.yScaler(d));
+            }
+
+            fade() {
+                if (!this.graphElement) return;
+                this.hostSvgElement.selectAll('rect')
+                    .transition()
+                    .duration(500)
+                    .ease(d3.easeLinear)
+                    .attr('y', this.yScaler(0))
+                    .attr('height', 0)
+                    .remove();
+            }
+        }
+
+        const svg = d3.select('#visualizer');
+        const width = 800;
+        const height = 400;
+
+        let audioContext, analyser, source, ledService;
+        const colorService = new ColorService();
+
+        const xScale = d3.scaleLinear().domain([0, 128]).range([0, width]);
+        const yScale = d3.scaleLinear().domain([0, 255]).range([height, 0]);
+
+        ledService = new LedService(svg, xScale, yScale, 50, colorService);
+
+        async function setupAudio() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                startVisualization();
+            } catch (err) {
+                console.error('Error accessing microphone:', err);
+                alert('Error accessing microphone. Please ensure you have a microphone and have granted permission.');
+            }
+        }
+
+        function startVisualization() {
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            function update() {
+                analyser.getByteFrequencyData(dataArray);
+                ledService.update(dataArray);
+                requestAnimationFrame(update);
+            }
+
+            update();
+        }
+
+        document.getElementById('startButton').addEventListener('click', () => {
+            setupAudio();
+            document.getElementById('startButton').disabled = true;
+            document.getElementById('stopButton').disabled = false;
+        });
+
+        document.getElementById('stopButton').addEventListener('click', () => {
+            if (audioContext) {
+                audioContext.close();
+                ledService.fade();
+            }
+            document.getElementById('startButton').disabled = false;
+            document.getElementById('stopButton').disabled = true;
+        });
+    </script>
+</body>
+</html>
